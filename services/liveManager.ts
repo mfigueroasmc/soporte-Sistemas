@@ -1,6 +1,6 @@
 import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from '@google/genai';
 import { decodeAudioData, createPcmBlob, decodeBase64 } from './audioUtils';
-import { TicketData } from '../types';
+import { TicketData, EmailDraft } from '../types';
 
 // Function definition for the tool
 const registerTicketTool: FunctionDeclaration = {
@@ -21,7 +21,7 @@ const registerTicketTool: FunctionDeclaration = {
 const getSystemInstruction = (userEmail: string) => `
 ROL DEL AGENTE
 Eres Soporte Sistemas, el asistente virtual de soporte para sistemas de gestión municipal en Chile.
-Tu objetivo es recibir requerimientos y errores de los funcionarios municipales, guiarlos cordialmente y enviar la información recopilada a un Webhook.
+Tu objetivo es recibir requerimientos y errores de los funcionarios municipales, guiarlos cordialmente y generar un reporte formal.
 
 CONTEXTO INICIAL
 El usuario ya ha ingresado su correo electrónico en el sistema. El correo es: "${userEmail}".
@@ -37,7 +37,7 @@ REGLAS
 - Valida la información: Si falta algún dato (Municipalidad, Sistema, Descripción), pídelo nuevamente.
 - Resume lo entregado para confirmar antes de enviar.
 - Una vez recibidos todos los datos, llama a la herramienta 'registerSupportTicket' incluyendo el correo "${userEmail}" en el campo correspondiente.
-- Indica que la información será procesada y que serán notificados por correo.
+- Indica que, al finalizar la llamada, se generará automáticamente el correo de reporte.
 
 Estilo de comunicación: Cortés, profesional, claro, cercano. Adaptado a funcionarios municipales. Evita tecnicismos.
 `;
@@ -53,6 +53,7 @@ export class LiveManager {
   
   public onVolumeChange: (volume: number) => void = () => {};
   public onTicketCreated: (ticket: TicketData) => void = () => {};
+  public onEmailReady: (draft: EmailDraft) => void = () => {};
   public onClose: () => void = () => {};
 
   constructor() {
@@ -118,29 +119,81 @@ export class LiveManager {
           if (msg.toolCall) {
             for (const fc of msg.toolCall.functionCalls) {
               if (fc.name === 'registerSupportTicket') {
+                const args = fc.args as any;
+                const timestamp = new Date().toISOString();
                 const ticketId = 'T-' + Math.floor(10000 + Math.random() * 90000);
-                const ticket: TicketData = {
-                  correo: (fc.args as any).correo,
-                  municipalidad: (fc.args as any).municipalidad,
-                  sistema: (fc.args as any).sistema,
-                  descripcion: (fc.args as any).descripcion,
-                  timestamp: new Date().toISOString(),
+
+                // UI Data (includes ticketId)
+                const uiTicket: TicketData = {
+                  correo: args.correo || '',
+                  municipalidad: args.municipalidad || '',
+                  sistema: args.sistema || '',
+                  descripcion: args.descripcion || '',
+                  timestamp: timestamp,
                   ticketId: ticketId
                 };
                 
                 // Trigger UI update
-                this.onTicketCreated(ticket);
+                this.onTicketCreated(uiTicket);
 
-                // Mock Webhook Response
-                console.log('Mocking Webhook POST:', ticket);
-                
-                sessionPromise.then(session => session.sendToolResponse({
-                  functionResponses: {
-                    id: fc.id,
-                    name: fc.name,
-                    response: { result: `Ticket registrado exitosamente. ID: ${ticketId}` }
+                console.log('Generating email summary for:', uiTicket);
+
+                // Generate Professional Email Summary using Gemini Flash
+                try {
+                  const prompt = `
+                    Analiza este requerimiento de soporte municipal y genera un resumen profesional para enviarlo por correo:
+
+                    Correo: ${uiTicket.correo}
+                    Municipalidad: ${uiTicket.municipalidad}
+                    Sistema: ${uiTicket.sistema}
+                    Descripción: ${uiTicket.descripcion}
+                    Timestamp: ${uiTicket.timestamp}
+                    ID Ticket: ${uiTicket.ticketId}
+
+                    Instrucciones:
+                    1. La primera línea debe ser SOLO el asunto sugerido, comenzando con "Asunto:".
+                    2. El resto debe ser el cuerpo del correo, claro, estructurado y profesional.
+                  `;
+
+                  const response = await this.ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: prompt
+                  });
+
+                  const fullText = response.text || '';
+                  
+                  // Extract Subject and Body
+                  const subjectMatch = fullText.match(/^Asunto:\s*(.*)/i);
+                  let subject = `Ticket ${uiTicket.ticketId} - Soporte ${uiTicket.municipalidad}`;
+                  let body = fullText;
+
+                  if (subjectMatch) {
+                    subject = subjectMatch[1].trim();
+                    // Remove the subject line from the body to avoid duplication
+                    body = fullText.replace(/^Asunto:.*\n+/i, '').trim();
                   }
-                }));
+
+                  // Emit Email Ready event instead of opening immediately
+                  this.onEmailReady({ subject, body });
+
+                  sessionPromise.then(session => session.sendToolResponse({
+                    functionResponses: {
+                      id: fc.id,
+                      name: fc.name,
+                      response: { result: `Borrador de correo generado y listo para enviar al finalizar.` }
+                    }
+                  }));
+
+                } catch (error) {
+                  console.error('Error generating email content:', error);
+                  sessionPromise.then(session => session.sendToolResponse({
+                    functionResponses: {
+                      id: fc.id,
+                      name: fc.name,
+                      response: { result: `Ticket ${ticketId} registrado, pero hubo un error generando el borrador.` }
+                    }
+                  }));
+                }
               }
             }
           }

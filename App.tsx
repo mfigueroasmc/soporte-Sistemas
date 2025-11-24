@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Square, Server, FileText, CheckCircle, Radio, Mail, Ticket } from 'lucide-react';
+import { Mic, Square, Server, FileText, CheckCircle, Radio, Mail, Ticket, Send } from 'lucide-react';
 import { LiveManager } from './services/liveManager';
 import Visualizer from './components/Visualizer';
-import { TicketData, ConnectionState } from './types';
+import { TicketData, ConnectionState, EmailDraft } from './types';
 
 function App() {
   const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
   const [volume, setVolume] = useState(0);
   const [latestTicket, setLatestTicket] = useState<TicketData | null>(null);
+  const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const [email, setEmail] = useState('');
   const liveManagerRef = useRef<LiveManager | null>(null);
 
@@ -15,11 +16,15 @@ function App() {
     if (!email) return;
     try {
       setConnectionState(ConnectionState.CONNECTING);
+      setLatestTicket(null);
+      setEmailDraft(null);
+      
       const manager = new LiveManager();
       liveManagerRef.current = manager;
 
       manager.onVolumeChange = (vol) => setVolume(vol);
       manager.onTicketCreated = (ticket) => setLatestTicket(ticket);
+      manager.onEmailReady = (draft) => setEmailDraft(draft);
       manager.onClose = () => {
         setConnectionState(ConnectionState.DISCONNECTED);
         setVolume(0);
@@ -35,13 +40,23 @@ function App() {
     }
   };
 
-  const handleDisconnect = () => {
+  const disconnectSession = () => {
     if (liveManagerRef.current) {
       liveManagerRef.current.disconnect();
       liveManagerRef.current = null;
     }
     setConnectionState(ConnectionState.DISCONNECTED);
     setVolume(0);
+  };
+
+  const handleStop = () => {
+    disconnectSession();
+    if (emailDraft) {
+        // Trigger mailto when user stops the call
+        const mailtoLink = `mailto:soporte@sistemas.cl?subject=${encodeURIComponent(emailDraft.subject)}&body=${encodeURIComponent(emailDraft.body)}`;
+        window.location.href = mailtoLink;
+        setEmailDraft(null);
+    }
   };
 
   // Cleanup on unmount
@@ -142,7 +157,9 @@ function App() {
                    <p className="text-red-500 font-medium">Error de conexión. Inténtelo de nuevo.</p>
                 )}
                 {connectionState === ConnectionState.CONNECTED && (
-                    <p className="text-slate-600 font-medium">Escuchando...</p>
+                    <p className="text-slate-600 font-medium">
+                        {emailDraft ? "Borrador de correo listo. Finalice para enviar." : "Escuchando..."}
+                    </p>
                 )}
               </div>
 
@@ -164,12 +181,16 @@ function App() {
                    </button>
                 ) : (
                   <button 
-                    onClick={handleDisconnect}
-                    className="flex items-center gap-3 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white px-8 py-4 rounded-full font-semibold text-lg shadow-lg hover:shadow-xl transition-all"
+                    onClick={handleStop}
+                    className={`
+                      flex items-center gap-3 px-8 py-4 rounded-full font-semibold text-lg shadow-lg hover:shadow-xl transition-all
+                      ${emailDraft ? 'bg-green-600 hover:bg-green-700 active:bg-green-800' : 'bg-red-500 hover:bg-red-600 active:bg-red-700'} 
+                      text-white
+                    `}
                     disabled={connectionState === ConnectionState.CONNECTING}
                   >
-                    <Square className="w-5 h-5 fill-current" />
-                    <span>Finalizar</span>
+                    {emailDraft ? <Send className="w-5 h-5" /> : <Square className="w-5 h-5 fill-current" />}
+                    <span>{emailDraft ? 'Finalizar y Enviar' : 'Finalizar'}</span>
                   </button>
                 )}
               </div>
@@ -201,10 +222,15 @@ function App() {
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
                    <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
                    <div>
-                     <h3 className="font-semibold text-green-800 text-sm">Información Enviada</h3>
+                     <h3 className="font-semibold text-green-800 text-sm">Información Capturada</h3>
                      <p className="text-green-700 text-xs mt-1">
                         Ticket ID: <span className="font-bold text-green-800">{latestTicket.ticketId}</span>
                      </p>
+                     {emailDraft && (
+                        <p className="text-green-600 text-[10px] mt-1 italic">
+                          Borrador de correo listo para enviar
+                        </p>
+                     )}
                    </div>
                 </div>
 

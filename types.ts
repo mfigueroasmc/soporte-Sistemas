@@ -7,6 +7,11 @@ export interface TicketData {
   ticketId?: string;
 }
 
+export interface EmailDraft {
+  subject: string;
+  body: string;
+}
+
 export enum ConnectionState {
   DISCONNECTED = 'DISCONNECTED',
   CONNECTING = 'CONNECTING',
