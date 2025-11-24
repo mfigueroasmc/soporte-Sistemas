@@ -1,0 +1,7 @@
+{
+  "name": "Soporte Sistemas - Asistente Municipal",
+  "description": "Asistente de voz inteligente para gestión de soporte municipal utilizando Gemini Live API.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
