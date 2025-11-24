@@ -1,23 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Square, Server, FileText, CheckCircle, Radio, Mail, Ticket, Send } from 'lucide-react';
+import { Mic, Square, Server, FileText, CheckCircle, Radio, Mail, Ticket, Send, Lightbulb, AlertCircle } from 'lucide-react';
 import { LiveManager } from './services/liveManager';
 import Visualizer from './components/Visualizer';
-import { TicketData, ConnectionState, EmailDraft } from './types';
+import { TicketData, ConnectionState, EmailDraft, SolutionData } from './types';
 
 function App() {
   const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
   const [volume, setVolume] = useState(0);
   const [latestTicket, setLatestTicket] = useState<TicketData | null>(null);
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
+  const [solutions, setSolutions] = useState<SolutionData | null>(null);
   const [email, setEmail] = useState('');
+  const [errorMessage, setErrorMessage] = useState<string>('');
   const liveManagerRef = useRef<LiveManager | null>(null);
 
   const handleConnect = async () => {
     if (!email) return;
+    setErrorMessage(''); // Clear previous errors
     try {
       setConnectionState(ConnectionState.CONNECTING);
       setLatestTicket(null);
       setEmailDraft(null);
+      setSolutions(null);
       
       const manager = new LiveManager();
       liveManagerRef.current = manager;
@@ -25,8 +29,24 @@ function App() {
       manager.onVolumeChange = (vol) => setVolume(vol);
       manager.onTicketCreated = (ticket) => setLatestTicket(ticket);
       manager.onEmailReady = (draft) => setEmailDraft(draft);
+      manager.onSolutionsReady = (sols) => setSolutions(sols);
+      
+      manager.onError = (msg) => {
+        setErrorMessage(msg);
+        setConnectionState(ConnectionState.ERROR);
+        // Auto-dismiss error state after 5 seconds to allow retry, 
+        // unless it's a hard permission error which usually persists until page reload/change
+        setTimeout(() => {
+            if (liveManagerRef.current === null) { // only reset if not currently trying to connect again
+                setConnectionState(ConnectionState.DISCONNECTED);
+                setErrorMessage('');
+            }
+        }, 5000);
+      };
+
       manager.onClose = () => {
-        setConnectionState(ConnectionState.DISCONNECTED);
+        // Only set to disconnected if we aren't in an error state that needs to be shown
+        setConnectionState(prev => prev === ConnectionState.ERROR ? prev : ConnectionState.DISCONNECTED);
         setVolume(0);
       };
 
@@ -34,9 +54,7 @@ function App() {
       setConnectionState(ConnectionState.CONNECTED);
     } catch (e) {
       console.error(e);
-      setConnectionState(ConnectionState.ERROR);
-      // Reset after a moment
-      setTimeout(() => setConnectionState(ConnectionState.DISCONNECTED), 3000);
+      // State updates handled by onError callback in manager
     }
   };
 
@@ -149,12 +167,15 @@ function App() {
               </div>
 
               {/* Status Message */}
-              <div className="h-6 mb-4 text-center">
+              <div className="min-h-[1.5rem] mb-4 text-center w-full">
                 {connectionState === ConnectionState.CONNECTING && (
                   <p className="text-blue-600 font-medium animate-bounce">Conectando con el servidor...</p>
                 )}
                 {connectionState === ConnectionState.ERROR && (
-                   <p className="text-red-500 font-medium">Error de conexión. Inténtelo de nuevo.</p>
+                   <div className="flex items-center justify-center gap-2 text-red-600 bg-red-50 px-4 py-2 rounded-lg border border-red-100 animate-pulse">
+                      <AlertCircle className="w-4 h-4" />
+                      <p className="font-medium text-sm">{errorMessage || "Error de conexión. Inténtelo de nuevo."}</p>
+                   </div>
                 )}
                 {connectionState === ConnectionState.CONNECTED && (
                     <p className="text-slate-600 font-medium">
@@ -200,17 +221,17 @@ function App() {
         {/* Right Panel: Data Output */}
         <div className={`
           flex-col border-t md:border-t-0 md:border-l border-slate-200 bg-white w-full md:w-96 transition-all duration-300 ease-in-out
-          ${latestTicket ? 'flex' : 'hidden md:flex'}
+          ${(latestTicket || solutions) ? 'flex' : 'hidden md:flex'}
         `}>
           <div className="p-4 border-b border-slate-100 bg-slate-50">
             <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
               <FileText className="w-4 h-4" />
-              Último Ticket Generado
+              Información de Sesión
             </h2>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6">
-            {!latestTicket ? (
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {(!latestTicket && !solutions) ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center space-y-4">
                  <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center">
                     <FileText className="w-8 h-8 text-slate-300" />
@@ -218,62 +239,83 @@ function App() {
                  <p className="text-sm max-w-[200px]">La información capturada durante la llamada aparecerá aquí.</p>
               </div>
             ) : (
-              <div className="space-y-6 animate-fade-in-up">
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
-                   <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-                   <div>
-                     <h3 className="font-semibold text-green-800 text-sm">Información Capturada</h3>
-                     <p className="text-green-700 text-xs mt-1">
-                        Ticket ID: <span className="font-bold text-green-800">{latestTicket.ticketId}</span>
-                     </p>
-                     {emailDraft && (
-                        <p className="text-green-600 text-[10px] mt-1 italic">
-                          Borrador de correo listo para enviar
-                        </p>
-                     )}
-                   </div>
-                </div>
-
-                <div className="space-y-4">
-                  
-                  {latestTicket.ticketId && (
-                    <div className="group">
-                      <label className="block text-xs font-bold text-slate-400 uppercase mb-1 flex items-center gap-1">
-                        <Ticket className="w-3 h-3" /> N° Ticket
-                      </label>
-                      <div className="text-slate-800 text-2xl font-bold border-b border-slate-100 pb-2">
-                        {latestTicket.ticketId}
-                      </div>
+              <>
+                {/* Suggestions Card */}
+                {solutions && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 animate-fade-in-up">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Lightbulb className="w-5 h-5 text-amber-500" />
+                            <h3 className="font-semibold text-amber-800 text-sm">Sugerencias Rápidas</h3>
+                        </div>
+                        <p className="text-xs text-amber-700 mb-2 font-medium">{solutions.title}</p>
+                        <ul className="list-disc pl-4 space-y-1">
+                            {solutions.steps.map((step, idx) => (
+                                <li key={idx} className="text-xs text-amber-800">{step}</li>
+                            ))}
+                        </ul>
                     </div>
-                  )}
+                )}
 
-                  <div className="group">
-                    <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Municipalidad</label>
-                    <div className="text-slate-800 text-lg font-medium border-b border-slate-100 pb-1">{latestTicket.municipalidad}</div>
-                  </div>
+                {/* Ticket Card */}
+                {latestTicket && (
+                    <div className="animate-fade-in-up space-y-6">
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+                        <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <h3 className="font-semibold text-green-800 text-sm">Información Capturada</h3>
+                            <p className="text-green-700 text-xs mt-1">
+                                Ticket ID: <span className="font-bold text-green-800">{latestTicket.ticketId}</span>
+                            </p>
+                            {emailDraft && (
+                                <p className="text-green-600 text-[10px] mt-1 italic">
+                                Borrador de correo listo para enviar
+                                </p>
+                            )}
+                        </div>
+                        </div>
 
-                  <div className="group">
-                    <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Sistema Afectado</label>
-                    <div className="text-slate-800 font-medium border-b border-slate-100 pb-1">{latestTicket.sistema}</div>
-                  </div>
+                        <div className="space-y-4">
+                        
+                        {latestTicket.ticketId && (
+                            <div className="group">
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1 flex items-center gap-1">
+                                <Ticket className="w-3 h-3" /> N° Ticket
+                            </label>
+                            <div className="text-slate-800 text-2xl font-bold border-b border-slate-100 pb-2">
+                                {latestTicket.ticketId}
+                            </div>
+                            </div>
+                        )}
 
-                  <div className="group">
-                    <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Solicitante</label>
-                    <div className="text-blue-600 font-medium border-b border-slate-100 pb-1">{latestTicket.correo}</div>
-                  </div>
+                        <div className="group">
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Municipalidad</label>
+                            <div className="text-slate-800 text-lg font-medium border-b border-slate-100 pb-1">{latestTicket.municipalidad}</div>
+                        </div>
 
-                  <div className="group">
-                    <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Descripción</label>
-                    <div className="text-slate-600 bg-slate-50 p-3 rounded-lg text-sm leading-relaxed border border-slate-100">
-                      {latestTicket.descripcion}
+                        <div className="group">
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Sistema Afectado</label>
+                            <div className="text-slate-800 font-medium border-b border-slate-100 pb-1">{latestTicket.sistema}</div>
+                        </div>
+
+                        <div className="group">
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Solicitante</label>
+                            <div className="text-blue-600 font-medium border-b border-slate-100 pb-1">{latestTicket.correo}</div>
+                        </div>
+
+                        <div className="group">
+                            <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Descripción</label>
+                            <div className="text-slate-600 bg-slate-50 p-3 rounded-lg text-sm leading-relaxed border border-slate-100">
+                            {latestTicket.descripcion}
+                            </div>
+                        </div>
+                        
+                        <div className="pt-4 text-right">
+                            <span className="text-xs text-slate-400">Generado: {new Date(latestTicket.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        </div>
                     </div>
-                  </div>
-                  
-                  <div className="pt-4 text-right">
-                     <span className="text-xs text-slate-400">Generado: {new Date(latestTicket.timestamp).toLocaleTimeString()}</span>
-                  </div>
-                </div>
-              </div>
+                )}
+              </>
             )}
           </div>
         </div>

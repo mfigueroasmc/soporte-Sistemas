@@ -23,3 +23,8 @@ export interface AudioVisualizerState {
   isSpeaking: boolean;
   volume: number;
 }
+
+export interface SolutionData {
+  title: string;
+  steps: string[];
+}
